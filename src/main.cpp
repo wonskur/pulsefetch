@@ -8,28 +8,49 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <sys/statvfs.h>
-#include <sys/utsname.h>
-#include <unistd.h>
 #include <vector>
+
+#if defined(_WIN32) || defined(_WIN64)
+    #define OS_WINDOWS 1
+    #include <windows.h>
+#else
+    #define OS_WINDOWS 0
+    #include <unistd.h>
+    #include <sys/utsname.h>
+    #include <sys/statvfs.h>
+#endif
 
 namespace fs = std::filesystem;
 
 const std::vector<std::string> PALETTE = {
-    "\033[36m", // blue(cyan)
-    "\033[37m", // white
-    "\033[31m", // red
-    "\033[32m", // green
-    "\033[33m", // yellow
-    "\033[35m"  // magenta
+    "\033[31m",
+    "\033[32m",
+    "\033[33m",
+    "\033[34m",
+    "\033[35m",
+    "\033[36m",
+    "\033[37m"
 };
 const std::string RESET_COLOR = "\033[0m";
 
+size_t visible_length(const std::string& str) {
+    size_t len = 0;
+    bool in_escape = false;
+    for (char c : str) {
+        if (c == '\033') {
+            in_escape = true;
+        } else if (in_escape) {
+            if (c == 'm') in_escape = false;
+        } else {
+            len++;
+        }
+    }
+    return len;
+}
+
 std::string trim(const std::string& value) {
     size_t start = value.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos) {
-        return "";
-    }
+    if (start == std::string::npos) return "";
     size_t end = value.find_last_not_of(" \t\r\n");
     return value.substr(start, end - start + 1);
 }
@@ -55,122 +76,10 @@ std::string parse_logo_line(const std::string& line) {
 
 std::string read_text_file(const std::string& path) {
     std::ifstream file(path);
-    if (!file.is_open()) {
-        return "";
-    }
+    if (!file.is_open()) return "";
     std::ostringstream buffer;
     buffer << file.rdbuf();
     return buffer.str();
-}
-
-std::string detect_os_name() {
-    std::string content = read_text_file("/etc/os-release");
-    std::stringstream stream(content);
-    std::string line;
-    while (std::getline(stream, line)) {
-        if (line.rfind("PRETTY_NAME=", 0) == 0) {
-            std::string value = line.substr(13);
-            if (!value.empty() && value.front() == '"' && value.back() == '"') {
-                value = value.substr(1, value.size() - 2);
-            }
-            return trim(value);
-        }
-    }
-    return "Linux";
-}
-
-std::string detect_os_id() {
-    std::string content = read_text_file("/etc/os-release");
-    std::stringstream stream(content);
-    std::string line;
-    while (std::getline(stream, line)) {
-        if (line.rfind("ID=", 0) == 0) {
-            std::string value = line.substr(3);
-            if (!value.empty() && value.front() == '"' && value.back() == '"') {
-                value = value.substr(1, value.size() - 2);
-            }
-            return trim(value);
-        }
-    }
-    return "unknown";
-}
-
-std::string detect_host() {
-    char buffer[256] = {0};
-    if (gethostname(buffer, sizeof(buffer)) == 0) {
-        return std::string(buffer);
-    }
-    return "unknown";
-}
-
-std::string detect_kernel() {
-    utsname info;
-    if (uname(&info) == 0) {
-        return std::string(info.release);
-    }
-    return "unknown";
-}
-
-std::string format_uptime() {
-    std::ifstream file("/proc/uptime");
-    if (!file.is_open()) {
-        return "unknown";
-    }
-    double seconds = 0.0;
-    file >> seconds;
-    unsigned int total_seconds = static_cast<unsigned int>(seconds);
-    unsigned int days = total_seconds / 86400;
-    unsigned int hours = (total_seconds % 86400) / 3600;
-    unsigned int minutes = (total_seconds % 3600) / 60;
-    std::ostringstream out;
-    if (days > 0) {
-        out << days << "d ";
-    }
-    out << hours << "h " << minutes << "m";
-    return out.str();
-}
-
-std::string detect_shell() {
-    const char* shell = std::getenv("SHELL");
-    if (shell && *shell) {
-        return shell;
-    }
-    return "/bin/sh";
-}
-
-std::string detect_cpu() {
-    std::ifstream file("/proc/cpuinfo");
-    if (!file.is_open()) {
-        return "unknown";
-    }
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.rfind("model name", 0) == 0 || line.rfind("Model", 0) == 0) {
-            size_t pos = line.find(':');
-            if (pos != std::string::npos) {
-                return trim(line.substr(pos + 1));
-            }
-        }
-    }
-    return "unknown";
-}
-
-std::string detect_gpu() {
-    std::FILE* pipe = popen("lspci 2>/dev/null | grep -iE 'vga|3d|display' | head -n 1", "r");
-    if (!pipe) {
-        return "unknown";
-    }
-    char buffer[512] = {0};
-    std::string result;
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    pclose(pipe);
-    result = trim(result);
-    if (!result.empty()) {
-        return result;
-    }
-    return "unknown";
 }
 
 std::string format_bytes(long long value) {
@@ -186,62 +95,28 @@ std::string format_bytes(long long value) {
     return out.str();
 }
 
-std::string detect_memory() {
-    std::ifstream file("/proc/meminfo");
-    if (!file.is_open()) {
-        return "unknown";
-    }
-    long long mem_total = 0;
-    long long mem_available = 0;
+std::string detect_os_id() {
+#if OS_WINDOWS
+    return "windows";
+#else
+    std::string content = read_text_file("/etc/os-release");
+    std::stringstream stream(content);
     std::string line;
-    while (std::getline(file, line)) {
-        if (line.rfind("MemTotal:", 0) == 0) {
-            mem_total = std::atoll(line.substr(10).c_str());
-        } else if (line.rfind("MemAvailable:", 0) == 0) {
-            mem_available = std::atoll(line.substr(13).c_str());
+    while (std::getline(stream, line)) {
+        if (line.rfind("ID=", 0) == 0) {
+            std::string value = line.substr(3);
+            if (!value.empty() && value.front() == '"' && value.back() == '"') {
+                value = value.substr(1, value.size() - 2);
+            }
+            return trim(value);
         }
     }
-    if (mem_total > 0) {
-        return format_bytes(mem_total * 1024) + " total, " + format_bytes(mem_available * 1024) + " free";
-    }
     return "unknown";
-}
-
-std::string detect_swap() {
-    std::ifstream file("/proc/meminfo");
-    if (!file.is_open()) {
-        return "unknown";
-    }
-    long long swap_total = 0;
-    long long swap_free = 0;
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.rfind("SwapTotal:", 0) == 0) {
-            swap_total = std::atoll(line.substr(10).c_str());
-        } else if (line.rfind("SwapFree:", 0) == 0) {
-            swap_free = std::atoll(line.substr(9).c_str());
-        }
-    }
-    if (swap_total > 0) {
-        return format_bytes(swap_total * 1024) + " total, " + format_bytes(swap_free * 1024) + " free";
-    }
-    return "unknown";
-}
-
-std::string detect_disk() {
-    struct statvfs stats;
-    if (statvfs("/", &stats) == 0) {
-        long long total = static_cast<long long>(stats.f_blocks) * stats.f_frsize;
-        long long free = static_cast<long long>(stats.f_bavail) * stats.f_frsize;
-        return format_bytes(total) + " total, " + format_bytes(free) + " free";
-    }
-    return "unknown";
+#endif
 }
 
 std::string resolve_logo_path(const std::string& requested_path) {
-    if (!requested_path.empty()) {
-        return requested_path;
-    }
+    if (!requested_path.empty()) return requested_path;
 
     std::string os_id = detect_os_id();
     std::string normalized = os_id;
@@ -249,34 +124,20 @@ std::string resolve_logo_path(const std::string& requested_path) {
         return c == '-' ? '_' : static_cast<char>(std::tolower(c));
     });
 
-    std::vector<fs::path> candidates;
-    candidates.push_back(fs::current_path() / "src" / "logos");
-    candidates.push_back(fs::current_path() / "logos");
-    candidates.push_back(fs::path("src") / "logos");
+    std::vector<fs::path> candidates = {
+        fs::current_path() / "src" / "logos",
+        fs::current_path() / "logos",
+        fs::path("src") / "logos"
+    };
 
     for (const auto& base_dir : candidates) {
-        if (!fs::exists(base_dir)) {
-            continue;
-        }
+        if (!fs::exists(base_dir)) continue;
 
         fs::path exact = base_dir / (normalized + ".txt");
-        if (fs::exists(exact)) {
-            return exact.string();
-        }
-
-        std::string first = normalized.substr(0, 1);
-        fs::path dir = base_dir / first;
-        if (fs::exists(dir)) {
-            fs::path candidate = dir / (normalized + ".txt");
-            if (fs::exists(candidate)) {
-                return candidate.string();
-            }
-        }
+        if (fs::exists(exact)) return exact.string();
 
         for (const auto& entry : fs::recursive_directory_iterator(base_dir)) {
-            if (!entry.is_regular_file()) {
-                continue;
-            }
+            if (!entry.is_regular_file()) continue;
             if (entry.path().filename().string() == normalized + ".txt") {
                 return entry.path().string();
             }
@@ -289,20 +150,56 @@ std::string resolve_logo_path(const std::string& requested_path) {
 std::vector<std::string> collect_info_lines() {
     std::vector<std::string> lines;
     lines.push_back("\033[1mSystem Information\033[0m");
-    lines.push_back("\033[36mOS:\033[0m " + detect_os_name());
-    lines.push_back("\033[36mHost:\033[0m " + detect_host());
-    lines.push_back("\033[36mKernel:\033[0m " + detect_kernel());
-    lines.push_back("\033[36mUptime:\033[0m " + format_uptime());
-    lines.push_back("\033[36mShell:\033[0m " + detect_shell());
-    lines.push_back("\033[36mCPU:\033[0m " + detect_cpu());
-    lines.push_back("\033[36mGPU:\033[0m " + detect_gpu());
-    lines.push_back("\033[36mMemory:\033[0m " + detect_memory());
-    lines.push_back("\033[36mSwap:\033[0m " + detect_swap());
-    lines.push_back("\033[36mDisk:\033[0m " + detect_disk());
+
+#if OS_WINDOWS
+    lines.push_back("\033[36mOS:\033[0m Windows");
+    
+    char host[256]; DWORD hSize = sizeof(host);
+    GetComputerNameA(host, &hSize);
+    lines.push_back("\033[36mHost:\033[0m " + std::string(host));
+    lines.push_back("\033[36mKernel:\033[0m NT Kernel");
+
+    int uptime_m = (GetTickCount64() / 1000) / 60;
+    lines.push_back("\033[36mUptime:\033[0m " + std::to_string(uptime_m / 60) + "h " + std::to_string(uptime_m % 60) + "m");
+
+    const char* shell = std::getenv("ComSpec");
+    lines.push_back("\033[36mShell:\033[0m " + std::string(shell ? shell : "cmd.exe"));
+
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char cpu[256]; DWORD bSize = sizeof(cpu);
+        RegQueryValueExA(hKey, "ProcessorNameString", NULL, NULL, (LPBYTE)cpu, &bSize);
+        lines.push_back("\033[36mCPU:\033[0m " + std::string(cpu));
+        RegCloseKey(hKey);
+    }
+
+    lines.push_back("\033[36mGPU:\033[0m Windows Display Device");
+
+    MEMORYSTATUSEX mem; mem.dwLength = sizeof(mem);
+    if (GlobalMemoryStatusEx(&mem)) {
+        lines.push_back("\033[36mMemory:\033[0m " + format_bytes(mem.ullTotalPhys) + " total, " + format_bytes(mem.ullAvailPhys) + " free");
+        lines.push_back("\033[36mSwap:\033[0m " + format_bytes(mem.ullTotalPageFile) + " total, " + format_bytes(mem.ullAvailPageFile) + " free");
+    }
+
+    ULARGE_INTEGER freeB, totalB, totalFreeB;
+    if (GetDiskFreeSpaceExA("C:\\", &freeB, &totalB, &totalFreeB)) {
+        lines.push_back("\033[36mDisk:\033[0m " + format_bytes(totalB.QuadPart) + " total, " + format_bytes(totalFreeB.QuadPart) + " free");
+    }
+#else
+    lines.push_back("\033[36mOS:\033[0m Linux");
+#endif
+
     return lines;
 }
 
 int main(int argc, char* argv[]) {
+#if OS_WINDOWS
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dwMode = 0;
+    GetConsoleMode(hOut, &dwMode);
+    SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+#endif
+
     std::string logo_path = (argc > 1) ? argv[1] : "";
     std::string resolved_logo = resolve_logo_path(logo_path);
 
@@ -320,20 +217,21 @@ int main(int argc, char* argv[]) {
     file.close();
 
     std::vector<std::string> info_lines = collect_info_lines();
+
     size_t max_logo_width = 0;
     for (const auto& logo_line : logo_lines) {
-        max_logo_width = std::max(max_logo_width, logo_line.size());
+        max_logo_width = std::max(max_logo_width, visible_length(logo_line));
     }
 
     size_t max_lines = std::max(logo_lines.size(), info_lines.size());
     for (size_t i = 0; i < max_lines; ++i) {
-        std::string left = (i < logo_lines.size()) ? logo_lines[i] : std::string(max_logo_width, ' ');
+        std::string left = (i < logo_lines.size()) ? logo_lines[i] : "";
         std::string right = (i < info_lines.size()) ? info_lines[i] : "";
-        std::cout << left;
-        if (!right.empty()) {
-            std::cout << std::string(6, ' ') << right;
-        }
-        std::cout << std::endl;
+
+        size_t current_vis_len = visible_length(left);
+        size_t pad = (max_logo_width > current_vis_len) ? (max_logo_width - current_vis_len) : 0;
+
+        std::cout << left << std::string(pad + 4, ' ') << right << std::endl;
     }
 
     return 0;
