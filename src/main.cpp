@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "generated_logos.hpp"
 
 #if defined(_WIN32) || defined(_WIN64)
     #define OS_WINDOWS 1
@@ -23,29 +24,51 @@
 namespace fs = std::filesystem;
 
 const std::vector<std::string> PALETTE = {
-    "\033[31m",
-    "\033[32m",
-    "\033[33m",
-    "\033[34m",
-    "\033[35m",
-    "\033[36m",
-    "\033[37m"
+    "\033[31m", "\033[32m", "\033[33m", "\033[34m",
+    "\033[35m", "\033[36m", "\033[37m"
 };
 const std::string RESET_COLOR = "\033[0m";
 
-size_t visible_length(const std::string& str) {
+size_t get_clean_width(const std::string& line) {
     size_t len = 0;
-    bool in_escape = false;
-    for (char c : str) {
-        if (c == '\033') {
-            in_escape = true;
-        } else if (in_escape) {
-            if (c == 'm') in_escape = false;
-        } else {
-            len++;
+    for (size_t i = 0; i < line.length(); ++i) {
+        if (line[i] == '$' && i + 1 < line.length()) {
+            if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
+                i++;
+                continue;
+            } else if (line[i + 1] == '$') {
+                len++;
+                i++;
+                continue;
+            }
         }
+        len++;
     }
     return len;
+}
+
+std::string parse_logo_line(const std::string& line) {
+    std::string result;
+    result.reserve(line.length() + 16);
+    for (size_t i = 0; i < line.length(); ++i) {
+        if (line[i] == '$' && i + 1 < line.length()) {
+            if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
+                int color_index = (line[i + 1] - '1');
+                if (color_index >= 0 && color_index < static_cast<int>(PALETTE.size())) {
+                    result += PALETTE[color_index];
+                }
+                i++;
+                continue;
+            } else if (line[i + 1] == '$') {
+                result += '$';
+                i++;
+                continue;
+            }
+        }
+        result += line[i];
+    }
+    result += RESET_COLOR;
+    return result;
 }
 
 std::string trim(const std::string& value) {
@@ -53,25 +76,6 @@ std::string trim(const std::string& value) {
     if (start == std::string::npos) return "";
     size_t end = value.find_last_not_of(" \t\r\n");
     return value.substr(start, end - start + 1);
-}
-
-std::string parse_logo_line(const std::string& line) {
-    std::string result;
-    for (size_t i = 0; i < line.length(); ++i) {
-        if (line[i] == '$' && i + 1 < line.length() && std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
-            int color_index = (line[i + 1] - '1');
-            if (color_index >= 0 && color_index < static_cast<int>(PALETTE.size())) {
-                result += PALETTE[color_index];
-            }
-            ++i;
-        } else if (line[i] == '$' && i + 1 < line.length() && line[i + 1] == '$') {
-            result += '$';
-            ++i;
-        } else {
-            result += line[i];
-        }
-    }
-    return result + RESET_COLOR;
 }
 
 std::string read_text_file(const std::string& path) {
@@ -115,40 +119,26 @@ std::string detect_os_id() {
 #endif
 }
 
-std::string resolve_logo_path(const std::string& requested_path) {
-    if (!requested_path.empty()) return requested_path;
-
-    std::string os_id = detect_os_id();
-    std::string normalized = os_id;
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+std::vector<std::string> get_logo_lines(const std::string& os_id) {
+    const auto& logos = get_embedded_logos();
+    
+    std::string key = os_id;
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
         return c == '-' ? '_' : static_cast<char>(std::tolower(c));
     });
 
-    std::vector<fs::path> candidates = {
-        fs::current_path() / "src" / "logos",
-        fs::current_path() / "logos",
-        fs::path("src") / "logos"
-    };
+    auto it = logos.find(key);
+    if (it != logos.end()) return it->second;
 
-    for (const auto& base_dir : candidates) {
-        if (!fs::exists(base_dir)) continue;
+    if (logos.count("windows")) return logos.at("windows");
+    if (logos.count("unknown")) return logos.at("unknown");
 
-        fs::path exact = base_dir / (normalized + ".txt");
-        if (fs::exists(exact)) return exact.string();
-
-        for (const auto& entry : fs::recursive_directory_iterator(base_dir)) {
-            if (!entry.is_regular_file()) continue;
-            if (entry.path().filename().string() == normalized + ".txt") {
-                return entry.path().string();
-            }
-        }
-    }
-
-    return (fs::current_path() / "src" / "logos" / "_" / "unknown.txt").string();
+    return {};
 }
 
 std::vector<std::string> collect_info_lines() {
     std::vector<std::string> lines;
+    lines.reserve(12);
     lines.push_back("\033[1mSystem Information\033[0m");
 
 #if OS_WINDOWS
@@ -169,7 +159,7 @@ std::vector<std::string> collect_info_lines() {
     if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         char cpu[256]; DWORD bSize = sizeof(cpu);
         RegQueryValueExA(hKey, "ProcessorNameString", NULL, NULL, (LPBYTE)cpu, &bSize);
-        lines.push_back("\033[36mCPU:\033[0m " + std::string(cpu));
+        lines.push_back("\033[36mCPU:\033[0m " + trim(std::string(cpu)));
         RegCloseKey(hKey);
     }
 
@@ -193,46 +183,51 @@ std::vector<std::string> collect_info_lines() {
 }
 
 int main(int argc, char* argv[]) {
+    std::ios_base::sync_with_stdio(false);
+    std::cin.tie(NULL);
+
 #if OS_WINDOWS
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD dwMode = 0;
-    GetConsoleMode(hOut, &dwMode);
-    SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    if (GetConsoleMode(hOut, &dwMode)) {
+        SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
 #endif
 
-    std::string logo_path = (argc > 1) ? argv[1] : "";
-    std::string resolved_logo = resolve_logo_path(logo_path);
+    std::string os_id = detect_os_id();
+    if (argc > 1) os_id = argv[1];
 
-    std::ifstream file(resolved_logo);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open logo file: " << resolved_logo << std::endl;
-        return 1;
-    }
+    std::vector<std::string> raw_logo_lines = get_logo_lines(os_id);
 
-    std::vector<std::string> logo_lines;
-    std::string line;
-    while (std::getline(file, line)) {
-        logo_lines.push_back(parse_logo_line(line));
+    while (!raw_logo_lines.empty() && get_clean_width(raw_logo_lines.front()) == 0) {
+        raw_logo_lines.erase(raw_logo_lines.begin());
     }
-    file.close();
 
     std::vector<std::string> info_lines = collect_info_lines();
 
     size_t max_logo_width = 0;
-    for (const auto& logo_line : logo_lines) {
-        max_logo_width = std::max(max_logo_width, visible_length(logo_line));
+    for (const auto& l : raw_logo_lines) {
+        max_logo_width = std::max(max_logo_width, get_clean_width(l));
     }
 
-    size_t max_lines = std::max(logo_lines.size(), info_lines.size());
+    std::string output_buffer;
+    output_buffer.reserve(4096);
+
+    size_t max_lines = std::max(raw_logo_lines.size(), info_lines.size());
     for (size_t i = 0; i < max_lines; ++i) {
-        std::string left = (i < logo_lines.size()) ? logo_lines[i] : "";
+        std::string raw_left = (i < raw_logo_lines.size()) ? raw_logo_lines[i] : "";
         std::string right = (i < info_lines.size()) ? info_lines[i] : "";
 
-        size_t current_vis_len = visible_length(left);
-        size_t pad = (max_logo_width > current_vis_len) ? (max_logo_width - current_vis_len) : 0;
+        size_t current_width = get_clean_width(raw_left);
+        size_t pad = (max_logo_width > current_width) ? (max_logo_width - current_width) : 0;
 
-        std::cout << left << std::string(pad + 4, ' ') << right << std::endl;
+        output_buffer += parse_logo_line(raw_left);
+        output_buffer.append(pad + 4, ' ');
+        output_buffer += right;
+        output_buffer += '\n';
     }
+
+    std::cout << output_buffer;
 
     return 0;
 }
