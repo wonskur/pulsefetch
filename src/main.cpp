@@ -3,9 +3,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
 
 #include "generated_logos.hpp"
 
@@ -19,61 +19,71 @@
     #include <unistd.h>
 #endif
 
-namespace fs = std::filesystem;
+const std::string RESET = "\033[0m";
 
-const std::vector<std::string> PALETTE = {
-    "\033[31m", "\033[32m", "\033[33m", "\033[34m",
-    "\033[35m", "\033[36m", "\033[37m"
+const std::unordered_map<std::string, std::vector<std::string>> DISTRO_PALETTES = {
+    {"debian",      {"\033[37m", "\033[31m"}}, // $1: White, $2: Red
+    {"debian_small",{"\033[31m"}}, // $1: Red
+    {"arch",        {"\033[36m", "\033[34m"}}, // $1: Cyan, $2: Blue
+    {"arch_small",  {"\033[36m", "\033[34m"}},
+    {"alpine",      {"\033[34m", "\033[37m"}}, // $1: Blue, $2: White
+    {"fedora",      {"\033[34m", "\033[37m"}}, // $1: Blue, $2: White
+    {"gentoo",      {"\033[35m", "\033[37m"}}, // $1: Magenta, $2: White
+    {"gentoo_small",{"\033[35m", "\033[37m"}},
+    {"cachyos",     {"\033[32m", "\033[36m", "\033[90m"}}, // $1: Green, $2: Cyan, $3: Gray
+    {"ubuntu",      {"\033[31m", "\033[33m", "\033[37m"}}, // $1: Red, $2: Yellow, $3: White
+    {"void",        {"\033[32m", "\033[30m", "\033[37m"}}, // $1: Green, $2: Black, $3: White
+    {"linux",       {"\033[37m", "\033[30m", "\033[33m"}}, // $1: White, $2: Black, $3: Yellow (Tux)
+    {"lfs",         {"\033[37m", "\033[34m", "\033[33m"}}, // $1: White, $2: Blue, $3: Yellow
+    {"crux",        {"\033[34m", "\033[35m", "\033[37m"}}, // $1: Blue, $2: Magenta, $3: White
+    {"nixos",       {"\033[34m", "\033[36m", "\033[34m", "\033[36m"}},// $1..$4: Blue / Cyan
+    {"manjaro",     {"\033[32m"}}, // $1: Green
+    {"linuxmint",   {"\033[37m", "\033[32m"}}, // $1: White, $2: Green
+    {"freebsd",     {"\033[37m", "\033[31m"}} // $1: White, $2: Red
 };
-const std::string RESET_COLOR = "\033[0m";
+
 std::string trim(const std::string& value) {
     size_t start = value.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) return "";
     size_t end = value.find_last_not_of(" \t\r\n");
     return value.substr(start, end - start + 1);
 }
+
 size_t get_clean_width(const std::string& line) {
     size_t len = 0;
     for (size_t i = 0; i < line.length(); ++i) {
-        if (line[i] == '$' && i + 1 < line.length()) {
-            if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
-                i++;
-                continue;
-            } else if (line[i + 1] == '$') {
-                len++;
-                i++;
-                continue;
-            }
+        if (line[i] == '$' && i + 1 < line.length() && line[i + 1] >= '1' && line[i + 1] <= '9') {
+            i++;
+            continue;
         }
         len++;
     }
     return len;
 }
+
 std::string parse_logo_line(const std::string& line, std::string& active_color, const std::vector<std::string>& palette) {
     std::string result;
     result.reserve(line.length() + 32);
+
     result += active_color;
+
     for (size_t i = 0; i < line.length(); ++i) {
-        if (line[i] == '$' && i + 1 < line.length()) {
-            if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
-                int color_index = (line[i + 1] - '1');
-                if (color_index >= 0 && color_index < static_cast<int>(palette.size())) {
-                    active_color = palette[color_index];
-                    result += active_color;
-                }
-                i++;
-                continue;
-            } else if (line[i + 1] == '$') {
-                result += '$';
-                i++;
-                continue;
+        if (line[i] == '$' && i + 1 < line.length() && line[i + 1] >= '1' && line[i + 1] <= '9') {
+            int color_idx = (line[i + 1] - '1');
+            if (color_idx >= 0 && color_idx < static_cast<int>(palette.size())) {
+                active_color = palette[color_idx];
+                result += active_color;
             }
+            i++;
+            continue;
         }
         result += line[i];
     }
-    result += RESET_COLOR;
+
+    result += RESET;
     return result;
 }
+
 std::string detect_os_id() {
 #if OS_WINDOWS
     return "windows";
@@ -93,23 +103,26 @@ std::string detect_os_id() {
     return "linux";
 #endif
 }
-std::vector<std::string> get_logo_lines(const std::string& os_id) {
+std::vector<std::string> get_logo_lines(const std::string& key) {
     const auto& logos = get_embedded_logos();
-    std::string key = os_id;
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
-        return c == '-' ? '_' : static_cast<char>(std::tolower(c));
-    });
     auto it = logos.find(key);
     if (it != logos.end()) return it->second;
+
+    if (logos.count("debian")) return logos.at("debian");
     if (logos.count("linux")) return logos.at("linux");
-    if (logos.count("windows")) return logos.at("windows");
     return {};
+}
+std::vector<std::string> get_palette(const std::string& key) {
+    auto it = DISTRO_PALETTES.find(key);
+    if (it != DISTRO_PALETTES.end()) {
+        return it->second;
+    }
+    return { "\033[36m", "\033[34m", "\033[32m", "\033[33m", "\033[31m", "\033[35m", "\033[37m" };
 }
 std::vector<std::string> collect_info_lines() {
     std::vector<std::string> lines;
     lines.reserve(12);
     lines.push_back("\033[1mSystem Information\033[0m");
-
 #if OS_WINDOWS
     char username[256]; DWORD uSize = sizeof(username);
     if (GetUserNameA(username, &uSize)) {
@@ -163,7 +176,12 @@ int main(int argc, char* argv[]) {
 #endif
     std::string os_id = detect_os_id();
     if (argc > 1) os_id = argv[1];
-    std::vector<std::string> raw_logo_lines = get_logo_lines(os_id);
+
+    std::string key = os_id;
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
+        return c == '-' ? '_' : static_cast<char>(std::tolower(c));
+    });
+    std::vector<std::string> raw_logo_lines = get_logo_lines(key);
     while (!raw_logo_lines.empty() && get_clean_width(raw_logo_lines.front()) == 0) {
         raw_logo_lines.erase(raw_logo_lines.begin());
     }
@@ -172,28 +190,26 @@ int main(int argc, char* argv[]) {
     for (const auto& l : raw_logo_lines) {
         max_logo_width = std::max(max_logo_width, get_clean_width(l));
     }
-    std::vector<std::string> current_palette = PALETTE;
-    if (os_id == "debian") {
-        current_palette = { "\033[31m", "\033[37m" };
-    } else if (os_id == "arch" || os_id == "cachyos") {
-        current_palette = { "\033[36m", "\033[34m", "\033[37m" };
+    std::vector<std::string> palette = get_palette(key);
+    std::string active_color = "\033[39m";
+    if (key == "debian" && palette.size() > 1) {
+        active_color = palette[1];
+    } else if (!raw_logo_lines.empty() && raw_logo_lines[0].find('$') == std::string::npos && !palette.empty()) {
+        active_color = palette[0];
     }
     size_t max_lines = std::max(raw_logo_lines.size(), info_lines.size());
     std::string output_buffer;
     output_buffer.reserve(4096);
-    std::string active_color = current_palette.empty() ? "" : current_palette[0];
     for (size_t i = 0; i < max_lines; ++i) {
         std::string raw_left = (i < raw_logo_lines.size()) ? raw_logo_lines[i] : "";
         std::string right = (i < info_lines.size()) ? info_lines[i] : "";
         size_t current_width = get_clean_width(raw_left);
         size_t pad = (max_logo_width > current_width) ? (max_logo_width - current_width) : 0;
-        output_buffer += parse_logo_line(raw_left, active_color, current_palette);
+        output_buffer += parse_logo_line(raw_left, active_color, palette);
         output_buffer.append(pad + 4, ' ');
         output_buffer += right;
         output_buffer += '\n';
     }
-
     std::cout << output_buffer;
-
     return 0;
 }
