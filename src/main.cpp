@@ -1,169 +1,213 @@
-#!/usr/bin/env python3
-import re
-import os
-import sys
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
 
-def parse_inc_file(path):
-    logos = []
-    with open(path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Find each logo definition
-    pattern = r'#ifdef FASTFETCH_DATATEXT_LOGO_(\w+)\s*//\s*(.+?)\s*\{\s*\.names\s*=\s*\{([^}]+)\},?\s*(?:\.type\s*=\s*[^,]+,?\s*)?\.lines\s*=\s*FASTFETCH_DATATEXT_LOGO_\1,\s*\.colors\s*=\s*\{([^}]*)\},?(?:\s*\.colorKeys\s*=\s*([^,]+),?\s*\.colorTitle\s*=\s*([^,]+),?)?\s*\},?\s*#endif'
-    
-    for match in re.finditer(pattern, content, re.DOTALL):
-        name = match.group(1)
-        comment = match.group(2).strip()
-        names_str = match.group(3)
-        colors_str = match.group(4)
-        color_keys = match.group(5) if match.group(5) else ''
-        color_title = match.group(6) if match.group(6) else ''
-        
-        names = [n.strip().strip('"') for n in names_str.split(',') if n.strip()]
-        colors = []
-        for c in colors_str.split(','):
-            c = c.strip()
-            if not c:
-                continue
-            # Parse color macro like FF_COLOR_FG_RED
-            color_map = {
-                'FF_COLOR_FG_RED': '\033[31m',
-                'FF_COLOR_FG_GREEN': '\033[32m',
-                'FF_COLOR_FG_YELLOW': '\033[33m',
-                'FF_COLOR_FG_BLUE': '\033[34m',
-                'FF_COLOR_FG_MAGENTA': '\033[35m',
-                'FF_COLOR_FG_CYAN': '\033[36m',
-                'FF_COLOR_FG_WHITE': '\033[37m',
-                'FF_COLOR_FG_BLACK': '\033[30m',
-                'FF_COLOR_FG_DEFAULT': '\033[39m',
-                'FF_COLOR_FG_LIGHT_RED': '\033[91m',
-                'FF_COLOR_FG_LIGHT_GREEN': '\033[92m',
-                'FF_COLOR_FG_LIGHT_YELLOW': '\033[93m',
-                'FF_COLOR_FG_LIGHT_BLUE': '\033[94m',
-                'FF_COLOR_FG_LIGHT_MAGENTA': '\033[95m',
-                'FF_COLOR_FG_LIGHT_CYAN': '\033[96m',
-                'FF_COLOR_FG_LIGHT_WHITE': '\033[97m',
-                'FF_COLOR_FG_LIGHT_BLACK': '\033[90m',
+#include "generated_logos.hpp"
+
+#if defined(_WIN32) || defined(_WIN64)
+    #define OS_WINDOWS 1
+    #define NOMINMAX
+    #include <windows.h>
+#else
+    #define OS_WINDOWS 0
+    #include <sys/utsname.h>
+    #include <unistd.h>
+#endif
+
+namespace fs = std::filesystem;
+
+const std::vector<std::string> PALETTE = {
+    "\033[31m", "\033[32m", "\033[33m", "\033[34m",
+    "\033[35m", "\033[36m", "\033[37m"
+};
+const std::string RESET_COLOR = "\033[0m";
+
+std::string trim(const std::string& value) {
+    size_t start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+size_t get_clean_width(const std::string& line) {
+    size_t len = 0;
+    for (size_t i = 0; i < line.length(); ++i) {
+        if (line[i] == '$' && i + 1 < line.length()) {
+            if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
+                i++;
+                continue;
+            } else if (line[i + 1] == '$') {
+                len++;
+                i++;
+                continue;
             }
-            # Handle FF_COLOR_FG_256 "number"
-            if 'FF_COLOR_FG_256' in c:
-                num = re.search(r'"(\d+)"', c)
-                if num:
-                    colors.append(f'\033[38;5;{num.group(1)}m')
-                continue
-            # Handle FF_COLOR_FG_RGB "r;g;b"
-            if 'FF_COLOR_FG_RGB' in c:
-                rgb = re.search(r'"([^"]+)"', c)
-                if rgb:
-                    colors.append(f'\033[38;2;{rgb.group(1)}m')
-                continue
-            # Handle FF_COLOR_BG_*
-            if 'FF_COLOR_BG' in c:
-                # Simple background handling
-                for k, v in color_map.items():
-                    if k.replace('FG', 'BG') in c or k in c:
-                        colors.append(v.replace('38', '48').replace('39', '49'))
-                        break
-                continue
-            # Handle FF_COLOR_MODE_BOLD
-            if 'FF_COLOR_MODE_BOLD' in c:
-                colors.append('\033[1m')
-                continue
-            # Simple color
-            found = False
-            for k, v in color_map.items():
-                if k in c:
-                    colors.append(v)
-                    found = True
-                    break
-            if not found:
-                colors.append('\033[39m')
-        
-        logos.append({
-            'name': name,
-            'names': names,
-            'colors': colors,
-            'colorKeys': color_keys,
-            'colorTitle': color_title,
-        })
-    
-    return logos
+        }
+        len++;
+    }
+    return len;
+}
 
-def generate_header(inc_files):
-    all_logos = []
-    for path in inc_files:
-        logos = parse_inc_file(path)
-        # Extract logo lines from original inc files
-        for logo in logos:
-            # Try to find the lines in the inc file
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            pattern = rf'#ifdef FASTFETCH_DATATEXT_LOGO_{logo["name"]}.*?#endif'
-            match = re.search(pattern, content, re.DOTALL)
-            if match:
-                # Extract lines between /* and */ or just lines
-                block = match.group(0)
-                # Find the actual logo lines (between .lines = and })
-                lines_pattern = r'\.lines\s*=\s*FASTFETCH_DATATEXT_LOGO_\w+,\s*//\s*(.+?)(?=\.colors|\.type|#endif|\})'
-                lines_match = re.search(lines_pattern, block, re.DOTALL)
-                if lines_match:
-                    lines_text = lines_match.group(1).strip()
-                    logo_lines = [l.strip() for l in lines_text.split('\n') if l.strip()]
-                    logo['lines'] = logo_lines
-                else:
-                    logo['lines'] = [f'${i+1}Logo {logo["name"]} line {i+1}' for i in range(8)]
-        all_logos.extend(logos)
-    
-    # Generate C++ code
-    output = []
-    output.append('// Auto-generated from .inc files')
-    output.append('#include <string>')
-    output.append('#include <vector>')
-    output.append('#include <unordered_map>')
-    output.append('')
-    output.append('static const std::unordered_map<std::string, std::vector<LogoEntry>> get_embedded_logos() {')
-    output.append('    std::unordered_map<std::string, std::vector<LogoEntry>> logos;')
-    output.append('    logos["logos"] = {')
-    
-    for logo in all_logos:
-        output.append('        {')
-        output.append(f'            .names = {{')
-        names = ', '.join(f'"{n}"' for n in logo['names'])
-        output.append(f'                {names}')
-        output.append('            },')
-        output.append('            .lines = {')
-        lines = ',\n'.join(f'                "{l}"' for l in logo['lines'])
-        output.append(lines)
-        output.append('            },')
-        output.append('            .colors = {')
-        colors = ',\n'.join(f'                "{c}"' for c in logo['colors'])
-        output.append(colors)
-        output.append('            },')
-        output.append(f'            .colorKeys = "{logo.get("colorKeys", "")}",')
-        output.append(f'            .colorTitle = "{logo.get("colorTitle", "")}",')
-        output.append('        },')
-    
-    output.append('    };')
-    output.append('    return logos;')
-    output.append('}')
-    output.append('')
-    output.append('static const std::unordered_map<std::string, std::vector<LogoEntry>> LOGOS = get_embedded_logos();')
-    
-    return '\n'.join(output)
+std::string parse_logo_line(const std::string& line) {
+    std::string result;
+    result.reserve(line.length() + 16);
+    for (size_t i = 0; i < line.length(); ++i) {
+        if (line[i] == '$' && i + 1 < line.length()) {
+            if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
+                int color_index = (line[i + 1] - '1');
+                if (color_index >= 0 && color_index < static_cast<int>(PALETTE.size())) {
+                    result += PALETTE[color_index];
+                }
+                i++;
+                continue;
+            } else if (line[i + 1] == '$') {
+                result += '$';
+                i++;
+                continue;
+            }
+        }
+        result += line[i];
+    }
+    result += RESET_COLOR;
+    return result;
+}
 
-if __name__ == '__main__':
-    inc_files = sys.argv[1:] if len(sys.argv) > 1 else [
-        'a.inc', 'b.inc', 'c.inc', 'd.inc', 'e.inc', 'f.inc', 'g.inc',
-        'h.inc', 'i.inc', 'j.inc', 'k.inc', 'l.inc', 'm.inc', 'n.inc',
-        'o.inc', 'p.inc', 'q.inc', 'r.inc', 's.inc', 't.inc', 'u.inc',
-        'v.inc', 'w.inc', 'x.inc', 'y.inc', 'z.inc'
-    ]
+std::string detect_os_id() {
+#if OS_WINDOWS
+    return "windows";
+#else
+    std::ifstream os_release("/etc/os-release");
+    if (os_release.is_open()) {
+        std::string line;
+        while (std::getline(os_release, line)) {
+            if (line.rfind("ID=", 0) == 0) {
+                std::string val = line.substr(3);
+                if (!val.empty() && (val.front() == '"' || val.front() == '\'')) val.erase(0, 1);
+                if (!val.empty() && (val.back() == '"' || val.back() == '\'')) val.pop_back();
+                return val;
+            }
+        }
+    }
+    return "linux";
+#endif
+}
+
+std::vector<std::string> get_logo_lines(const std::string& os_id) {
+    const auto& logos = get_embedded_logos();
     
-    if os.path.exists('generated_logos.hpp'):
-        os.remove('generated_logos.hpp')
-    
-    header = generate_header(inc_files)
-    with open('generated_logos.hpp', 'w', encoding='utf-8') as f:
-        f.write(header)
-    
-    print("Generated generated_logos.hpp")
+    std::string key = os_id;
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
+        return c == '-' ? '_' : static_cast<char>(std::tolower(c));
+    });
+
+    auto it = logos.find(key);
+    if (it != logos.end()) return it->second;
+
+    if (logos.count("linux")) return logos.at("linux");
+    if (logos.count("windows")) return logos.at("windows");
+
+    return {};
+}
+
+std::vector<std::string> collect_info_lines() {
+    std::vector<std::string> lines;
+    lines.reserve(12);
+    lines.push_back("\033[1mSystem Information\033[0m");
+
+#if OS_WINDOWS
+    char username[256]; DWORD uSize = sizeof(username);
+    if (GetUserNameA(username, &uSize)) {
+        lines.push_back("\033[32mUser:\033[0m " + std::string(username));
+    }
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char cpu[256]; DWORD bSize = sizeof(cpu);
+        RegQueryValueExA(hKey, "ProcessorNameString", NULL, NULL, (LPBYTE)cpu, &bSize);
+        lines.push_back("\033[36mCPU:\033[0m " + trim(std::string(cpu)));
+        RegCloseKey(hKey);
+    }
+#else
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        char* user = getlogin();
+        if (user) lines.push_back("\033[32mUser:\033[0m " + std::string(user) + "@" + std::string(hostname));
+    }
+
+    struct utsname sysinfo_data;
+    if (uname(&sysinfo_data) == 0) {
+        lines.push_back("\033[33mOS:\033[0m " + std::string(sysinfo_data.sysname) + " " + std::string(sysinfo_data.release));
+        lines.push_back("\033[35mKernel:\033[0m " + std::string(sysinfo_data.release));
+        lines.push_back("\033[34mArch:\033[0m " + std::string(sysinfo_data.machine));
+    }
+
+    std::ifstream cpuinfo("/proc/cpuinfo");
+    if (cpuinfo.is_open()) {
+        std::string line;
+        while (std::getline(cpuinfo, line)) {
+            if (line.rfind("model name", 0) == 0) {
+                size_t colon = line.find(':');
+                if (colon != std::string::npos) {
+                    lines.push_back("\033[36mCPU:\033[0m " + trim(line.substr(colon + 1)));
+                    break;
+                }
+            }
+        }
+    }
+#endif
+
+    return lines;
+}
+
+int main(int argc, char* argv[]) {
+    std::ios_base::sync_with_stdio(false);
+    std::cin.tie(NULL);
+
+#if OS_WINDOWS
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dwMode = 0;
+    if (GetConsoleMode(hOut, &dwMode)) {
+        SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+#endif
+
+    std::string os_id = detect_os_id();
+    if (argc > 1) os_id = argv[1];
+
+    std::vector<std::string> raw_logo_lines = get_logo_lines(os_id);
+
+    while (!raw_logo_lines.empty() && get_clean_width(raw_logo_lines.front()) == 0) {
+        raw_logo_lines.erase(raw_logo_lines.begin());
+    }
+
+    std::vector<std::string> info_lines = collect_info_lines();
+
+    size_t max_logo_width = 0;
+    for (const auto& l : raw_logo_lines) {
+        max_logo_width = std::max(max_logo_width, get_clean_width(l));
+    }
+
+    size_t max_lines = std::max(raw_logo_lines.size(), info_lines.size());
+    std::string output_buffer;
+    output_buffer.reserve(4096);
+
+    for (size_t i = 0; i < max_lines; ++i) {
+        std::string raw_left = (i < raw_logo_lines.size()) ? raw_logo_lines[i] : "";
+        std::string right = (i < info_lines.size()) ? info_lines[i] : "";
+
+        size_t current_width = get_clean_width(raw_left);
+        size_t pad = (max_logo_width > current_width) ? (max_logo_width - current_width) : 0;
+
+        output_buffer += parse_logo_line(raw_left);
+        output_buffer.append(pad + 4, ' ');
+        output_buffer += right;
+        output_buffer += '\n';
+    }
+
+    std::cout << output_buffer;
+
+    return 0;
+}
