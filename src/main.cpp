@@ -51,16 +51,17 @@ size_t get_clean_width(const std::string& line) {
     }
     return len;
 }
-
-std::string parse_logo_line(const std::string& line) {
+std::string parse_logo_line(const std::string& line, std::string& active_color, const std::vector<std::string>& palette) {
     std::string result;
-    result.reserve(line.length() + 16);
+    result.reserve(line.length() + 32);
+    result += active_color;
     for (size_t i = 0; i < line.length(); ++i) {
         if (line[i] == '$' && i + 1 < line.length()) {
             if (std::isdigit(static_cast<unsigned char>(line[i + 1]))) {
                 int color_index = (line[i + 1] - '1');
-                if (color_index >= 0 && color_index < static_cast<int>(PALETTE.size())) {
-                    result += PALETTE[color_index];
+                if (color_index >= 0 && color_index < static_cast<int>(palette.size())) {
+                    active_color = palette[color_index];
+                    result += active_color;
                 }
                 i++;
                 continue;
