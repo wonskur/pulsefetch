@@ -26,14 +26,12 @@ const std::vector<std::string> PALETTE = {
     "\033[35m", "\033[36m", "\033[37m"
 };
 const std::string RESET_COLOR = "\033[0m";
-
 std::string trim(const std::string& value) {
     size_t start = value.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) return "";
     size_t end = value.find_last_not_of(" \t\r\n");
     return value.substr(start, end - start + 1);
 }
-
 size_t get_clean_width(const std::string& line) {
     size_t len = 0;
     for (size_t i = 0; i < line.length(); ++i) {
@@ -76,7 +74,6 @@ std::string parse_logo_line(const std::string& line, std::string& active_color, 
     result += RESET_COLOR;
     return result;
 }
-
 std::string detect_os_id() {
 #if OS_WINDOWS
     return "windows";
@@ -96,24 +93,18 @@ std::string detect_os_id() {
     return "linux";
 #endif
 }
-
 std::vector<std::string> get_logo_lines(const std::string& os_id) {
     const auto& logos = get_embedded_logos();
-    
     std::string key = os_id;
     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
         return c == '-' ? '_' : static_cast<char>(std::tolower(c));
     });
-
     auto it = logos.find(key);
     if (it != logos.end()) return it->second;
-
     if (logos.count("linux")) return logos.at("linux");
     if (logos.count("windows")) return logos.at("windows");
-
     return {};
 }
-
 std::vector<std::string> collect_info_lines() {
     std::vector<std::string> lines;
     lines.reserve(12);
@@ -137,14 +128,12 @@ std::vector<std::string> collect_info_lines() {
         char* user = getlogin();
         if (user) lines.push_back("\033[32mUser:\033[0m " + std::string(user) + "@" + std::string(hostname));
     }
-
     struct utsname sysinfo_data;
     if (uname(&sysinfo_data) == 0) {
         lines.push_back("\033[33mOS:\033[0m " + std::string(sysinfo_data.sysname) + " " + std::string(sysinfo_data.release));
         lines.push_back("\033[35mKernel:\033[0m " + std::string(sysinfo_data.release));
         lines.push_back("\033[34mArch:\033[0m " + std::string(sysinfo_data.machine));
     }
-
     std::ifstream cpuinfo("/proc/cpuinfo");
     if (cpuinfo.is_open()) {
         std::string line;
@@ -162,11 +151,9 @@ std::vector<std::string> collect_info_lines() {
 
     return lines;
 }
-
 int main(int argc, char* argv[]) {
     std::ios_base::sync_with_stdio(false);
     std::cin.tie(NULL);
-
 #if OS_WINDOWS
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD dwMode = 0;
@@ -174,35 +161,33 @@ int main(int argc, char* argv[]) {
         SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     }
 #endif
-
     std::string os_id = detect_os_id();
     if (argc > 1) os_id = argv[1];
-
     std::vector<std::string> raw_logo_lines = get_logo_lines(os_id);
-
     while (!raw_logo_lines.empty() && get_clean_width(raw_logo_lines.front()) == 0) {
         raw_logo_lines.erase(raw_logo_lines.begin());
     }
-
     std::vector<std::string> info_lines = collect_info_lines();
-
     size_t max_logo_width = 0;
     for (const auto& l : raw_logo_lines) {
         max_logo_width = std::max(max_logo_width, get_clean_width(l));
     }
-
+    std::vector<std::string> current_palette = PALETTE;
+    if (os_id == "debian") {
+        current_palette = { "\033[31m", "\033[37m" };
+    } else if (os_id == "arch" || os_id == "cachyos") {
+        current_palette = { "\033[36m", "\033[34m", "\033[37m" };
+    }
     size_t max_lines = std::max(raw_logo_lines.size(), info_lines.size());
     std::string output_buffer;
     output_buffer.reserve(4096);
-
+    std::string active_color = current_palette.empty() ? "" : current_palette[0];
     for (size_t i = 0; i < max_lines; ++i) {
         std::string raw_left = (i < raw_logo_lines.size()) ? raw_logo_lines[i] : "";
         std::string right = (i < info_lines.size()) ? info_lines[i] : "";
-
         size_t current_width = get_clean_width(raw_left);
         size_t pad = (max_logo_width > current_width) ? (max_logo_width - current_width) : 0;
-
-        output_buffer += parse_logo_line(raw_left);
+        output_buffer += parse_logo_line(raw_left, active_color, current_palette);
         output_buffer.append(pad + 4, ' ');
         output_buffer += right;
         output_buffer += '\n';
