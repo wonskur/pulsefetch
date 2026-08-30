@@ -9768,6 +9768,17 @@ inline const std::unordered_map<std::string, std::vector<std::string>>& get_embe
             "        q###r",
             "         \"\"",
         }},
-    };
+    {"lynxlinux", {
+    "88",
+    "88",
+    "88",
+    "88 8b       d8 8b,dPPYba,  8b,     ,d8",
+    "88 `8b     d8' 88P'   `"8a  `Y8, ,8P'",
+    "88  `8b   d8'  88       88    )888(",
+    "88   `8b,d8'   88       88  ,d8" "8b,",
+    "88     Y88'    88       88 8P'     `Y8",
+    "       d8'"
+    "      d8'",
+    }};
     return EMBEDDED_LOGOS;
 }
