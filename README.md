@@ -6,9 +6,9 @@ A minimalist and ultra-fast C++ CLI utility for displaying operating system info
 ```bash
 git clone https://github.com/wonskur/pulsefetch.git
 cd pulsefetch
-g++ -O3 -flto src/main.cpp -o pulsefetch.exe
+g++ -O3 -flto src/main.cpp -o pulsefetch
 ```
 ## or clang
 ```bash
-clang++ -O3 src/main.cpp -o pulsefetch.exe
+clang++ -O3 src/main.cpp -o pulsefetch
 ```
