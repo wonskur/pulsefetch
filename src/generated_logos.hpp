@@ -9770,7 +9770,14 @@ inline const std::unordered_map<std::string, std::vector<std::string>> &get_embe
                         "         \"\"",
                     }},
         {"makeos", {
-                        "MakeOS"
+                        "     |\/|",
+                        " ____| _/)",
+                        "|  !__/ |",
+                        "|  ___  |",
+                        "| |   | |",
+                        " ^     ^",
+                        "My name is Mak",
+                        "i`am donkey",
                     }},
     };
     return EMBEDDED_LOGOS;
