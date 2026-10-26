@@ -9772,5 +9772,5 @@ inline const std::unordered_map<std::string, std::vector<std::string>> &get_embe
         {"makeos", {
                         "MakeOS"
                     }},
-    return EMBEDDED_LOGOS;
+    return EMBEDDED_LOGOS;}
 }
