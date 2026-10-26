@@ -9770,7 +9770,7 @@ inline const std::unordered_map<std::string, std::vector<std::string>> &get_embe
                         "         \"\"",
                     }},
         {"makeos", {
-                        "     |\/|",
+                        "     |\\/|",
                         " ____| _/)",
                         "|  !__/ |",
                         "|  ___  |",
